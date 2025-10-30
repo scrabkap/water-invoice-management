@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>מערכת ניהול חשבונות מים - Water Invoice Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.10.3/dist/Recharts.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const API_BASE_URL = 'https://ep0fnmz8f4.execute-api.us-east-1.amazonaws.com/prod';
+        
+        const { useState, useEffect } = React;
+        const { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+        
+        const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+
+        const AlertCircle = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+        );
+
+        const CheckCircle = () => (
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="9 12 12 15 16 10"></polyline>
+            </svg>
+        );
+
+        const TrendingUp = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                <polyline points="17 6 23 6 23 12"></polyline>
+            </svg>
+        );
+
+        function WaterInvoiceApp() {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [periods, setPeriods] = useState([]);
+            const [selectedPeriod, setSelectedPeriod] = useState('');
+            const [invoices, setInvoices] = useState([]);
+            const [statistics, setStatistics] = useState(null);
+            const [anomalies, setAnomalies] = useState([]);
+            const [failedInvoices, setFailedInvoices] = useState([]);
+            const [filters, setFilters] = useState({ store: '', vendor: '', status: 'success' });
+            const [loading, setLoading] = useState(false);
+
+            useEffect(() => { fetchPeriods(); }, []);
+            useEffect(() => {
+                if (selectedPeriod) {
+                    fetchInvoices();
+                    fetchStatistics();
+                    fetchAnomalies();
+                    if (activeTab === 'failed') fetchFailedInvoices();
+                }
+            }, [selectedPeriod, filters, activeTab]);
+
+            const fetchPeriods = async () => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/periods`);
+                    const data = await response.json();
+                    setPeriods(data.periods || []);
+                    if (data.periods && data.periods.length > 0) setSelectedPeriod(data.periods[0]);
+                } catch (error) {
+                    console.error('Error fetching periods:', error);
+                    alert('שגיאה בטעינת תקופות. בדוק את החיבור ל-API');
+                }
+            };
+
+            const fetchInvoices = async () => {
+                setLoading(true);
+                try {
+                    const params = new URLSearchParams({
+                        period: selectedPeriod,
+                        status: filters.status,
+                        ...(filters.store && { store: filters.store }),
+                        ...(filters.vendor && { vendor: filters.vendor })
+                    });
+                    const response = await fetch(`${API_BASE_URL}/invoices?${params}`);
+                    const data = await response.json();
+                    setInvoices(data.invoices || []);
+                } catch (error) {
+                    console.error('Error fetching invoices:', error);
+                }
+                setLoading(false);
+            };
+
+            const fetchStatistics = async () => {
+                try {
+                    const params = new URLSearchParams({
+                        period: selectedPeriod,
+                        ...(filters.store && { store: filters.store }),
+                        ...(filters.vendor && { vendor: filters.vendor })
+                    });
+                    const response = await fetch(`${API_BASE_URL}/statistics?${params}`);
+                    const data = await response.json();
+                    setStatistics(data);
+                } catch (error) {
+                    console.error('Error fetching statistics:', error);
+                }
+            };
+
+            const fetchAnomalies = async () => {
+                try {
+                    const params = new URLSearchParams({
+                        ...(filters.store && { store: filters.store }),
+                        threshold: '2.0'
+                    });
+                    const response = await fetch(`${API_BASE_URL}/anomalies?${params}`);
+                    const data = await response.json();
+                    setAnomalies(data.anomalies || []);
+                } catch (error) {
+                    console.error('Error fetching anomalies:', error);
+                }
+            };
+
+            const fetchFailedInvoices = async () => {
+                setLoading(true);
+                try {
+                    const params = new URLSearchParams({ period: selectedPeriod, status: 'fail' });
+                    const response = await fetch(`${API_BASE_URL}/invoices?${params}`);
+                    const data = await response.json();
+                    setFailedInvoices(data.invoices || []);
+                } catch (error) {
+                    console.error('Error fetching failed invoices:', error);
+                }
+                setLoading(false);
+            };
+
+            const approveInvoice = async (s3Key) => {
+                try {
+                    const response = await fetch(`${API_BASE_URL}/invoices/approve`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ s3_key: s3Key, approved_by: 'POC User', notes: 'אושר דרך ממשק המשתמש' })
+                    });
+                    const data = await response.json();
+                    alert('✅ החשבונית אושרה בהצלחה!\n(מצב POC - אין שינוי בנתונים)');
+                    fetchInvoices();
+                } catch (error) {
+                    console.error('Error approving invoice:', error);
+                    alert('❌ שגיאה באישור חשבונית');
+                }
+            };
+
+            const formatCurrency = (amount) => {
+                return new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS' }).format(amount);
+            };
+
+            const formatNumber = (num) => {
+                return new Intl.NumberFormat('he-IL').format(num);
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50" dir="rtl">
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 py-4">
+                            <h1 className="text-3xl font-bold text-blue-600">מערכת ניהול חשבונות מים</h1>
+                            <p className="text-gray-600 mt-1">Water Invoice Management POC</p>
+                        </div>
+                    </header>
+
+                    <nav className="bg-white border-b">
+                        <div className="max-w-7xl mx-auto px-4">
+                            <div className="flex space-x-reverse space-x-4 overflow-x-auto">
+                                {[
+                                    { id: 'dashboard', label: 'לוח בקרה' },
+                                    { id: 'invoices', label: 'חשבונות' },
+                                    { id: 'statistics', label: 'סטטיסטיקות' },
+                                    { id: 'anomalies', label: 'חריגות' },
+                                    { id: 'failed', label: 'חשבונות כושלים' }
+                                ].map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`px-4 py-3 font-medium border-b-2 transition-colors ${
+                                            activeTab === tab.id ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-600 hover:text-gray-900'
+                                        }`}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </nav>
+
+                    <div className="bg-white border-b">
+                        <div className="max-w-7xl mx-auto px-4 py-4">
+                            <div className="flex flex-wrap gap-4 items-end">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">תקופה</label>
+                                    <select
+                                        value={selectedPeriod}
+                                        onChange={(e) => setSelectedPeriod(e.target.value)}
+                                        className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        {periods.map((period) => <option key={period} value={period}>{period}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">חנות</label>
+                                    <input
+                                        type="text"
+                                        value={filters.store}
+                                        onChange={(e) => setFilters({ ...filters, store: e.target.value })}
+                                        placeholder="מספר חנות"
+                                        className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">ספק</label>
+                                    <input
+                                        type="text"
+                                        value={filters.vendor}
+                                        onChange={(e) => setFilters({ ...filters, vendor: e.target.value })}
+                                        placeholder="מספר ספק"
+                                        className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                                    />
+                                </div>
+                                <button
+                                    onClick={() => setFilters({ store: '', vendor: '', status: 'success' })}
+                                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+                                >
+                                    נקה סינון
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <main className="max-w-7xl mx-auto px-4 py-6">
+                        {loading ? (
+                            <div className="flex justify-center items-center h-64">
+                                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                            </div>
+                        ) : (
+                            <>
+                                {activeTab === 'dashboard' && statistics && (
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                            <div className="bg-white rounded-lg shadow p-6">
+                                                <h3 className="text-gray-600 text-sm font-medium">סה"כ צריכה</h3>
+                                                <p className="text-3xl font-bold text-blue-600 mt-2">
+                                                    {formatNumber(statistics.summary.total_consumption)} m³
+                                                </p>
+                                            </div>
+                                            <div className="bg-white rounded-lg shadow p-6">
+                                                <h3 className="text-gray-600 text-sm font-medium">סה"כ סכום</h3>
+                                                <p className="text-3xl font-bold text-green-600 mt-2">
+                                                    {formatCurrency(statistics.summary.total_amount)}
+                                                </p>
+                                            </div>
+                                            <div className="bg-white rounded-lg shadow p-6">
+                                                <h3 className="text-gray-600 text-sm font-medium">מספר חשבונות</h3>
+                                                <p className="text-3xl font-bold text-purple-600 mt-2">
+                                                    {statistics.summary.invoice_count}
+                                                </p>
+                                            </div>
+                                            <div className="bg-white rounded-lg shadow p-6">
+                                                <h3 className="text-gray-600 text-sm font-medium">ממוצע צריכה</h3>
+                                                <p className="text-3xl font-bold text-orange-600 mt-2">
+                                                    {formatNumber(statistics.summary.avg_consumption.toFixed(1))} m³
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                            <div className="bg-white rounded-lg shadow p-6">
+                                                <h3 className="text-lg font-semibold mb-4">צריכת מים לפי חנות (Top 10)</h3>
+                                                <ResponsiveContainer width="100%" height={300}>
+                                                    <BarChart data={statistics.by_store.slice(0, 10)}>
+                                                        <CartesianGrid strokeDasharray="3 3" />
+                                                        <XAxis dataKey="store" />
+                                                        <YAxis />
+                                                        <Tooltip />
+                                                        <Legend />
+                                                        <Bar dataKey="consumption" fill="#3b82f6" name="צריכה (m³)" />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+
+                                            <div className="bg-white rounded-lg shadow p-6">
+                                                <h3 className="text-lg font-semibold mb-4">התפלגות לפי ספק</h3>
+                                                <ResponsiveContainer width="100%" height={300}>
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={statistics.by_vendor}
+                                                            dataKey="consumption"
+                                                            nameKey="vendor"
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            outerRadius={100}
+                                                            label
+                                                        >
+                                                            {statistics.by_vendor.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        {anomalies.length > 0 && (
+                                            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                                <div className="flex items-start">
+                                                    <AlertCircle />
+                                                    <div className="mr-3">
+                                                        <h4 className="font-semibold text-red-800">
+                                                            זוהו {anomalies.length} חריגות בצריכת מים
+                                                        </h4>
+                                                        <p className="text-red-700 text-sm mt-1">
+                                                            חנויות עם צריכה חריגה ביחס לממוצע ההיסטורי שלהן
+                                                        </p>
+                                                        <button
+                                                            onClick={() => setActiveTab('anomalies')}
+                                                            className="mt-2 text-sm text-red-800 font-medium hover:underline"
+                                                        >
+                                                            צפה בכל החריגות ←
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {activeTab === 'invoices' && (
+                                    <div className="bg-white rounded-lg shadow">
+                                        <div className="px-6 py-4 border-b">
+                                            <h2 className="text-xl font-semibold">חשבונות - {selectedPeriod}</h2>
+                                            <p className="text-gray-600 text-sm mt-1">סה"כ {invoices.length} חשבונות</p>
+                                        </div>
+                                        {invoices.length === 0 ? (
+                                            <div className="text-center py-12">
+                                                <p className="text-gray-600">אין חשבונות להצגה בתקופה זו</p>
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-x-auto">
+                                                <table className="min-w-full divide-y divide-gray-200">
+                                                    <thead className="bg-gray-50">
+                                                        <tr>
+                                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">חנות</th>
+                                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">ספק</th>
+                                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">צריכה (m³)</th>
+                                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">סכום</th>
+                                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">תאריך</th>
+                                                            <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">פעולות</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="bg-white divide-y divide-gray-200">
+                                                        {invoices.map((invoice, idx) => (
+                                                            <tr key={idx} className="hover:bg-gray-50">
+                                                                <td className="px-6 py-4 whitespace-nowrap">
+                                                                    <div className="text-sm font-medium text-gray-900">{invoice.fields.store_name}</div>
+                                                                    <div className="text-sm text-gray-500">#{invoice.fields.store}</div>
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{invoice.fields.vendor_name}</td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
+                                                                    {formatNumber(invoice.fields.total_consumption)}
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
+                                                                    {formatCurrency(invoice.fields.total_amount)}
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                                    {invoice.fields.invoice_date}
+                                                                </td>
+                                                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                                    <button
+                                                                        onClick={() => approveInvoice(invoice.s3_key)}
+                                                                        className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded-lg text-xs font-medium"
+                                                                    >
+                                                                        אשר
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {activeTab === 'statistics' && statistics && (
+                                    <div className="space-y-6">
+                                        <div className="bg-white rounded-lg shadow p-6">
+                                            <h2 className="text-xl font-semibold mb-4">נתונים סטטיסטיים מפורטים</h2>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                <div className="border rounded-lg p-4">
+                                                    <h4 className="text-sm text-gray-600 mb-2">ממוצע צריכה</h4>
+                                                    <p className="text-2xl font-bold text-blue-600">
+                                                        {formatNumber(statistics.summary.avg_consumption.toFixed(2))} m³
+                                                    </p>
+                                                </div>
+                                                <div className="border rounded-lg p-4">
+                                                    <h4 className="text-sm text-gray-600 mb-2">חציון צריכה</h4>
+                                                    <p className="text-2xl font-bold text-purple-600">
+                                                        {formatNumber(statistics.summary.median_consumption.toFixed(2))} m³
+                                                    </p>
+                                                </div>
+                                                <div className="border rounded-lg p-4">
+                                                    <h4 className="text-sm text-gray-600 mb-2">סטיית תקן</h4>
+                                                    <p className="text-2xl font-bold text-orange-600">
+                                                        {formatNumber(statistics.summary.std_deviation.toFixed(2))} m³
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-white rounded-lg shadow p-6">
+                                            <h3 className="text-lg font-semibold mb-4">דירוג חנויות לפי צריכה</h3>
+                                            <div className="space-y-2">
+                                                {statistics.by_store.slice(0, 10).map((store, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                                        <div className="flex items-center space-x-reverse space-x-3">
+                                                            <span className="text-lg font-bold text-gray-400">#{idx + 1}</span>
+                                                            <div>
+                                                                <p className="font-medium">{store.store}</p>
+                                                                <p className="text-sm text-gray-600">{store.invoice_count} חשבונות</p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="text-left">
+                                                            <p className="font-bold text-blue-600">{formatNumber(store.consumption)} m³</p>
+                                                            <p className="text-sm text-gray-600">{formatCurrency(store.amount)}</p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'anomalies' && (
+                                    <div className="bg-white rounded-lg shadow">
+                                        <div className="px-6 py-4 border-b">
+                                            <h2 className="text-xl font-semibold">חריגות בצריכה</h2>
+                                            <p className="text-gray-600 text-sm mt-1">חנויות עם צריכה חריגה מעל 2 סטיות תקן מהממוצע</p>
+                                        </div>
+                                        <div className="p-6 space-y-4">
+                                            {anomalies.length === 0 ? (
+                                                <div className="text-center py-12">
+                                                    <CheckCircle />
+                                                    <p className="text-gray-600 mt-3">לא זוהו חריגות בתקופה זו</p>
+                                                </div>
+                                            ) : (
+                                                anomalies.map((anomaly, idx) => (
+                                                    <div key={idx} className="border-r-4 border-red-500 bg-red-50 rounded-lg p-4">
+                                                        <div className="flex items-start justify-between">
+                                                            <div className="flex-1">
+                                                                <div className="flex items-center gap-2 mb-2">
+                                                                    <TrendingUp />
+                                                                    <h4 className="font-semibold text-gray-900">
+                                                                        {anomaly.store_name} (#{anomaly.store})
+                                                                    </h4>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3">
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-600">צריכה נוכחית</p>
+                                                                        <p className="font-bold text-red-600">
+                                                                            {formatNumber(anomaly.latest_consumption)} m³
+                                                                        </p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-600">ממוצע היסטורי</p>
+                                                                        <p className="font-bold text-gray-700">
+                                                                            {formatNumber(anomaly.average_consumption.toFixed(1))} m³
+                                                                        </p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-600">סטיות תקן</p>
+                                                                        <p className="font-bold text-orange-600">
+                                                                            {anomaly.z_score.toFixed(2)}σ
+                                                                        </p>
+                                                                    </div>
+                                                                    <div>
+                                                                        <p className="text-xs text-gray-600">אחוז סטייה</p>
+                                                                        <p className="font-bold text-red-600">
+                                                                            +{anomaly.deviation_percentage.toFixed(1)}%
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="mt-3 text-sm text-gray-600">
+                                                                    <p>ספק: {anomaly.vendor}</p>
+                                                                    <p>תקופה: {anomaly.period} | תאריך: {anomaly.invoice_date}</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'failed' && (
+                                    <div className="bg-white rounded-lg shadow">
+                                        <div className="px-6 py-4 border-b">
+                                            <h2 className="text-xl font-semibold">חשבונות כושלים</h2>
+                                            <p className="text-gray-600 text-sm mt-1">חשבונות עם נתונים חסרים הדורשים עדכון</p>
+                                        </div>
+                                        <div className="p-6 space-y-4">
+                                            {failedInvoices.length === 0 ? (
+                                                <div className="text-center py-12">
+                                                    <CheckCircle />
+                                                    <p className="text-gray-600 mt-3">אין חשבונות כושלים בתקופה זו</p>
+                                                </div>
+                                            ) : (
+                                                failedInvoices.map((invoice, idx) => (
+                                                    <div key={idx} className="border border-yellow-300 bg-yellow-50 rounded-lg p-4">
+                                                        <div className="flex items-start justify-between">
+                                                            <div className="flex-1">
+                                                                <div className="flex items-center gap-2 mb-2">
+                                                                    <AlertCircle />
+                                                                    <h4 className="font-semibold text-gray-900">
+                                                                        {invoice.fields.store_name || 'לא ידוע'} (#{invoice.fields.store || 'N/A'})
+                                                                    </h4>
+                                                                </div>
+                                                                <div className="mt-2">
+                                                                    <p className="text-sm font-medium text-gray-700 mb-1">שדות חסרים:</p>
+                                                                    <div className="flex flex-wrap gap-2">
+                                                                        {invoice.metadata.missing_fields?.map((field, i) => (
+                                                                            <span key={i} className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded">
+                                                                                {field}
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="mt-3">
+                                                                    <button
+                                                                        onClick={() => alert('POC Mode: במצב ייצור, כאן ניתן לעדכן את השדות החסרים')}
+                                                                        className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium"
+                                                                    >
+                                                                        עדכן נתונים
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </main>
+
+                    <footer className="bg-white border-t mt-12">
+                        <div className="max-w-7xl mx-auto px-4 py-6">
+                            <p className="text-center text-gray-600 text-sm">
+                                Water Invoice Management POC - Powered by AWS Lambda & API Gateway
+                            </p>
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<WaterInvoiceApp />);
+    </script>
+</body>
+</html>
